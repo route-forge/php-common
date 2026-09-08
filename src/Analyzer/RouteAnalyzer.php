@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace RouteForge\Common\Analyzer;
 
 use RouteForge\Common\Alias\AliasResolver;
+use RouteForge\Common\Contract\RouteNormalizerInterface;
 use RouteForge\Common\Dto\RouteInfo;
 use RouteForge\Common\Filter\RouteNameFilter;
 use RouteForge\Common\Repository\RouteRepository;
@@ -31,6 +32,23 @@ final class RouteAnalyzer
         private readonly AliasResolver $aliasResolver,
         private readonly RouteNameFilter $filter = new RouteNameFilter(),
     ) {
+    }
+
+    /**
+     * analyze() 的便捷入口：直接消费框架原生路由集合，由调用方提供的
+     * normalizer 逐一归一化。供各框架命令省去手写归一化循环。
+     *
+     * @param iterable<mixed> $rawRoutes 框架原生路由集合（如 Laravel Router）
+     * @param RouteNormalizerInterface $normalizer 框架适配层提供的归一化器
+     */
+    public function analyzeRoutes(iterable $rawRoutes, RouteNormalizerInterface $normalizer): array
+    {
+        $infos = [];
+        foreach ($rawRoutes as $route) {
+            $infos[] = $normalizer->normalize($route);
+        }
+
+        return $this->analyze($infos);
     }
 
     /**

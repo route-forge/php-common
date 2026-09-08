@@ -7,6 +7,8 @@ namespace RouteForge\Common\Tests\Unit;
 use PHPUnit\Framework\TestCase;
 use RouteForge\Common\Alias\AliasResolver;
 use RouteForge\Common\Analyzer\RouteAnalyzer;
+use RouteForge\Common\Contract\RouteNormalizerInterface;
+use RouteForge\Common\Dto\RouteInfo;
 use RouteForge\Common\Filter\RouteNameFilter;
 use RouteForge\Common\Tier\TierResolver;
 
@@ -102,5 +104,38 @@ class RouteAnalyzerPayloadTest extends TestCase
         $payload = $this->analyzer->listPayload([], [], [], [], 'admin', true, true);
 
         $this->assertSame(['level' => 'admin', 'unassigned' => true, 'aliases' => true], $payload['filter']);
+    }
+
+    public function test_analyze_routes_normalizes_raw_collection(): void
+    {
+        // analyzeRoutes 便捷入口：raw 集合经 normalizer 逐一归一化后走同一 analyze 管道
+        $normalizer = new class implements RouteNormalizerInterface {
+            public function normalize(mixed $route): RouteInfo
+            {
+                return new RouteInfo(
+                    name: $route['name'],
+                    uri: $route['uri'],
+                    methods: ['GET'],
+                    parameters: [],
+                    parameterDefaults: [],
+                    middleware: [],
+                    tier: 'admin',
+                    forgeAliases: [],
+                    source: $route,
+                );
+            }
+        };
+
+        $analysis = (new RouteAnalyzer(
+            new TierResolver(['admin' => ['description' => '', 'load' => 'lazy']]),
+            new AliasResolver([]),
+            new RouteNameFilter(),
+        ))->analyzeRoutes(
+            [['name' => 'a', 'uri' => 'a'], ['name' => 'b', 'uri' => 'b']],
+            $normalizer,
+        );
+
+        $this->assertSame(['a', 'b'], array_column($analysis['rows'], 'name'));
+        $this->assertSame(['admin' => 2], $analysis['tier_counts']);
     }
 }
