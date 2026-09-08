@@ -145,4 +145,28 @@ class RouteCacheTest extends TestCase
         sleep(2);
         $this->assertNull($cache->get('admin'));
     }
+
+    public function test_forget_level_invalidates_summary_as_well(): void
+    {
+        // 不变量（RouteCache::forgetLevel 封装）：层级失效必须同步失效摘要，
+        // 否则摘要 route_count 与层级明细漂移（route:forge:clear --level 依赖此行为）
+        $cache = $this->makeCache();
+        $cache->set('admin', ['level' => 'admin', 'routes' => []]);
+        $cache->set(RouteCache::SUMMARY_LEVEL, ['schemeVersion' => 1]);
+
+        $cache->forgetLevel('admin');
+
+        $this->assertNull($cache->get('admin'));
+        $this->assertNull($cache->get(RouteCache::SUMMARY_LEVEL));
+    }
+
+    public function test_forget_level_with_summary_level_itself_is_safe(): void
+    {
+        $cache = $this->makeCache();
+        $cache->set(RouteCache::SUMMARY_LEVEL, ['schemeVersion' => 1]);
+
+        $cache->forgetLevel(RouteCache::SUMMARY_LEVEL);
+
+        $this->assertNull($cache->get(RouteCache::SUMMARY_LEVEL));
+    }
 }

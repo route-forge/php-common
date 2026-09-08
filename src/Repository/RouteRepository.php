@@ -171,7 +171,7 @@ final class RouteRepository
      */
     public function getSummary(): array
     {
-        $cached = $this->cache->get('summary');
+        $cached = $this->cache->get(RouteCache::SUMMARY_LEVEL);
         if ($cached !== null) {
             return $cached;
         }
@@ -229,7 +229,7 @@ final class RouteRepository
             'config'        => $config,
         ];
 
-        $this->cache->set('summary', $payload);
+        $this->cache->set(RouteCache::SUMMARY_LEVEL, $payload);
 
         return $payload;
     }

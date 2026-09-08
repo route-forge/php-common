@@ -30,6 +30,15 @@ class RouteCache
 
     private const KEYS_INDEX = 'route-forge:_keys';
 
+    /**
+     * 摘要端点的缓存「层级名」（getSummary 写、route:forge:clear --level 读）。
+     *
+     * 摘要缓存与层级缓存同表存放：摘要的 route_count 依赖各层级路由数据，
+     * 任何层级失效都必须同步失效摘要，否则计数与明细漂移——该不变量由
+     * {@see self::forgetLevel()} 封装，各框架 clear 命令一律经它失效层级。
+     */
+    public const SUMMARY_LEVEL = 'summary';
+
     private readonly ?CacheInterface $store;
     private readonly bool $debugMode;
     private readonly ?int $ttl;
@@ -109,6 +118,21 @@ class RouteCache
                 'Cache driver error: ' . $e->getMessage(),
                 previous: $e,
             );
+        }
+    }
+
+    /**
+     * 失效单个层级，并同步失效摘要缓存。
+     *
+     * 不变量（勿绕过）：摘要的 route_count 依赖各层级路由数据，层级失效后
+     * 摘要必须一并失效，否则摘要计数与层级明细漂移。各框架的
+     * route:forge:clear --level 实现一律调用本方法，禁止直接 forget($level)。
+     */
+    public function forgetLevel(string $level): void
+    {
+        $this->forget($level);
+        if ($level !== self::SUMMARY_LEVEL) {
+            $this->forget(self::SUMMARY_LEVEL);
         }
     }
 
