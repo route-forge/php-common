@@ -26,12 +26,12 @@ route-forge-symfony  ← Symfony Bundle 适配层（依赖本包，规划中）
 
 - `Tier\TierResolver` — 五级优先级层级解析（显式标注 > classifier 回调 > 配置 match > unassigned 兜底；`middleware_match` 支持 any / all / DNF）
 - `Alias\AliasResolver` — 路由别名合并（宏声明 + 配置表；撞车 / 悬空 fail-fast）
-- `Repository\RouteRepository` — 层级元信息 / 摘要 / unassigned / 全量索引（带缓存）
-- `Analyzer\RouteAnalyzer` — 命令层共用的全量路由分析（含别名行与警告）
-- `Type\TypeGenerator` — TS d.ts 与 JSON 类型产物生成
+- `Repository\RouteRepository` — 层级元信息 / 摘要 / unassigned / 全量索引（带缓存）；`normalizeEndpointPrefix()` 为端点前缀唯一规范化实现
+- `Analyzer\RouteAnalyzer` — 命令层共用的全量路由分析（含别名行与警告）；`analyzeRoutes()` 便捷入口、`filterRows()` / `listPayload()` 组装 `list --json` 契约（SPEC §3.2）
+- `Type\TypeGenerator` — TS d.ts 与 JSON 类型产物生成；`collectTargets()` 负责 rows → 类型输入映射（空层级预置 / HEAD 过滤 / body 方法判定）
 - `Summary\SummaryRenderer` — 首页内嵌摘要脚本渲染（`__ROUTE_FORGE__`）
 - `Config\ConfigFileGenerator` — 管理器配置文件的 PHP 源码生成（防注入转义）
-- `Cache\RouteCache` — 层级缓存 + keys 索引（`clear()` 不依赖通配符）
+- `Cache\RouteCache` — 层级缓存 + keys 索引（`clear()` 不依赖通配符）；`SUMMARY_LEVEL` 常量与 `forgetLevel()` 封装「层级失效必同步失效摘要」不变量
 - `Filter\RouteNameFilter` — 路由名排除（forge 自身端点 + 框架内部路由）
 
 ## 使用
