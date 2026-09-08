@@ -130,4 +130,104 @@ final class RouteAnalyzer
             'collisions'  => $aliasResolution['collisions'],
         ];
     }
+
+    /**
+     * 展示用方法列表：过滤 HEAD（与端点元信息、管理器口径一致）。
+     *
+     * @param string[] $methods
+     *
+     * @return list<string>
+     */
+    public static function withoutHead(array $methods): array
+    {
+        return array_values(array_filter(
+            $methods,
+            fn (string $m): bool => strtoupper($m) !== 'HEAD',
+        ));
+    }
+
+    /**
+     * 按命令行过滤条件筛 rows（--level / --unassigned / --aliases）。
+     *
+     * @param list<array{name:string, level:string, tier:string|null, alias_of:string|null, ...}> $rows analyze() 的 rows
+     * @param string|null $level --level 值（可含 unassigned 特殊层级）；null/'' 表示不过滤
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function filterRows(array $rows, ?string $level, bool $onlyUnassigned = false, bool $onlyAliases = false): array
+    {
+        $out = [];
+        foreach ($rows as $r) {
+            if ($level !== null && $level !== '' && $r['level'] !== $level) {
+                continue;
+            }
+            // --unassigned 过滤：tier === null 才是未分配（--level=unassigned 语义等价）
+            if ($onlyUnassigned && $r['tier'] !== null) {
+                continue;
+            }
+            if ($onlyAliases && $r['alias_of'] === null) {
+                continue;
+            }
+            $out[] = $r;
+        }
+
+        return $out;
+    }
+
+    /**
+     * 组装 route:forge:list --json 的输出结构（SPEC §3.2 契约）。
+     *
+     * 框架无关：命令层（Artisan / ThinkPHP / Symfony）只负责 json_encode 与打印，
+     * 结构、键序与口径变化只允许发生在本方法。
+     *
+     * @param string[] $levels 已配置层级名（决定 tier_counts 的展示顺序）
+     * @param list<array<string, mixed>> $rows 经 filterRows() 过滤后的行
+     * @param array<string, int> $tierCounts analyze() 的 tier_counts（过滤前统计）
+     * @param string[] $warnings analyze() 的 warnings
+     *
+     * @return array{levels: string[], filter: array<string, mixed>|null, count: int, tier_counts: array<string, int>, warnings: string[], routes: list<array{name: string, level: string, methods: list<string>, uri: string, alias_of: string|null}>}
+     */
+    public function listPayload(
+        array $levels,
+        array $rows,
+        array $tierCounts,
+        array $warnings,
+        ?string $level = null,
+        bool $onlyUnassigned = false,
+        bool $onlyAliases = false,
+    ): array {
+        // 过滤条件描述
+        $filterDesc = [];
+        if ($level !== null && $level !== '') {
+            $filterDesc['level'] = $level;
+        }
+        if ($onlyUnassigned) {
+            $filterDesc['unassigned'] = true;
+        }
+        if ($onlyAliases) {
+            $filterDesc['aliases'] = true;
+        }
+
+        // 层级汇总：全部已配置层级 + unassigned（0 也列出），顺序 = 配置顺序
+        $orderedCounts = [];
+        foreach ($levels as $l) {
+            $orderedCounts[$l] = $tierCounts[$l] ?? 0;
+        }
+        $orderedCounts['unassigned'] = $tierCounts['unassigned'] ?? 0;
+
+        return [
+            'levels'      => array_merge($levels, ['unassigned']),
+            'filter'      => $filterDesc === [] ? null : $filterDesc,
+            'count'       => count($rows),
+            'tier_counts' => $orderedCounts,
+            'warnings'    => $warnings,
+            'routes'      => array_map(static fn (array $r): array => [
+                'name'     => $r['name'],
+                'level'    => $r['level'],
+                'methods'  => self::withoutHead($r['methods']),
+                'uri'      => $r['uri'],
+                'alias_of' => $r['alias_of'],
+            ], $rows),
+        ];
+    }
 }
