@@ -415,12 +415,20 @@ final class RouteRepository
 
     /**
      * 端点前缀规范化：确保前导 /、去除尾部 /，避免双斜杠。
-     * 与端点注册路径保持同一规范化（供摘要下发的 endpoint_prefix 使用）。
+     *
+     * 公共静态工具：端点注册、摘要下发（endpoint_prefix）与各框架
+     * types 命令的文件头注释必须使用同一规范化，防止自定义 prefix
+     * （如 'forge/routes/'）后各处取值失真。
      */
+    public static function normalizeEndpointPrefix(string $prefix): string
+    {
+        return '/' . ltrim(rtrim($prefix, '/'), '/');
+    }
+
     private function normalizedEndpointPrefix(): string
     {
-        $prefix = (string) ($this->runtimeConfig['endpoint_prefix'] ?? '/_forge/routes');
-
-        return '/' . ltrim(rtrim($prefix, '/'), '/');
+        return self::normalizeEndpointPrefix(
+            (string) ($this->runtimeConfig['endpoint_prefix'] ?? '/_forge/routes'),
+        );
     }
 }
