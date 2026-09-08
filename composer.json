@@ -1,0 +1,44 @@
+{
+    "name": "route-forge/common",
+    "description": "Framework-agnostic core of route-forge: tiered routing metadata, TS type generation, aliases, caching and summary contracts shared by framework adapters (Laravel / ThinkPHP / Symfony).",
+    "license": "MIT",
+    "type": "library",
+    "homepage": "https://github.com/route-forge/php-common",
+    "keywords": [
+        "route",
+        "routes",
+        "routing",
+        "named-route",
+        "spa",
+        "tier",
+        "tiered-routing",
+        "lazy-loading",
+        "metadata",
+        "typescript",
+        "types",
+        "single-source-of-truth",
+        "php"
+    ],
+    "require": {
+        "php": "^8.2",
+        "psr/log": "^2.0 || ^3.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.5 || ^11.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "RouteForge\\Common\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "RouteForge\\Common\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit --colors=always"
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

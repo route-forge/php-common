@@ -1,0 +1,19 @@
+# Composer 依赖与锁文件（library 包惯例：不提交 lock）
+/vendor/
+composer.phar
+composer.lock
+
+# PHPUnit
+/.phpunit.cache/
+.phpunit.result.cache
+/coverage/
+
+# IDE / 编辑器
+/.idea/
+/.vscode/
+*.swp
+
+# 操作系统
+.DS_Store
+Thumbs.db
+desktop.ini

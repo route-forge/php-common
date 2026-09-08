@@ -1,0 +1,158 @@
+<?php
+
+declare(strict_types=1);
+
+namespace RouteForge\Common\Alias;
+
+use InvalidArgumentException;
+use RouteForge\Common\Dto\RouteInfo;
+use RouteForge\Common\Exception\AliasTargetException;
+use RouteForge\Common\Filter\RouteNameFilter;
+
+/**
+ * 路由别名解析器（SPEC §3.1.7）。
+ *
+ * 将两个声明通道合并为一张「别名 → 真实路由名」映射表：
+ *   1. 路由宏 ->forgeAlias('旧名')——别名声明写在被指向（新名）路由上，
+ *      框架适配层从 action['forge_aliases'] 提取进 RouteInfo::forgeAliases；
+ *   2. config/forge.php 的 'aliases' => ['旧名' => '新名']——集中批量声明。
+ *
+ * 合并规则（对齐 tier 的「显式 > 配置」优先级，SPEC §3.1.4）：
+ *   - 同一别名同时经宏与 config 声明时，宏（显式）优先；
+ *   - 别名与真实路由名撞车时，真实路由优先，别名被丢弃并记录警告；
+ *   - 别名指向的路由名不存在（悬空）时抛 AliasTargetException（RF_BE_008）。
+ *
+ * 别名是元信息层概念：不参与 tier 解析 / strict_mode / unassigned 逻辑，
+ * 元信息条目在目标路由所在层级注入（见 RouteRepository）。
+ */
+class AliasResolver
+{
+    /**
+     * @param array<string, mixed> $configAliases config 的 aliases 映射（键=别名，值=真实路由名）
+     */
+    public function __construct(
+        private readonly array $configAliases,
+        private readonly RouteNameFilter $filter = new RouteNameFilter(),
+    ) {
+        foreach ($this->configAliases as $alias => $target) {
+            if (!is_string($alias) || $alias === '' || !is_string($target) || $target === '') {
+                throw new InvalidArgumentException(
+                    'forge.aliases must be a map of [alias(string) => route name(string)]; '
+                    . 'got [' . var_export($alias, true) . ' => ' . var_export($target, true) . ']',
+                );
+            }
+        }
+    }
+
+    /**
+     * 从路由信息表解析别名映射。
+     *
+     * @param iterable<RouteInfo> $infos 统一路由信息（适配层已转换；不做排除过滤，本方法内部过滤）
+     *
+     * @return array{
+     *   aliases:   array<string,string>,  别名 => 真实路由名
+     *   warnings:  string[],              非致命问题（撞车丢弃等），由 list/管理器展示
+     *   collisions: array<string,string>, 被忽略的撞车声明（别名 => 其声明指向），供 list 表格红行展示
+     * }
+     *
+     * @throws AliasTargetException 任一别名的目标路由名在路由表中不存在
+     */
+    public function resolve(iterable $infos): array
+    {
+        $realNames = [];
+        $aliases   = [];
+        $warnings  = [];
+        $collisions = [];
+
+        // 第一遍：收集真实路由名与宏声明（按声明序，先声明者优先）
+        $macroDecls = [];     // alias => 首个声明它的真实路由名
+        $macroDupes = [];     // alias => 后续重复声明的真实路由名列表
+        foreach ($infos as $info) {
+            $name = $info->name;
+            if ($name === null || $name === '') {
+                // 未命名路由上的 ->forgeAlias() 声明会随路由一起被忽略（别名跟随
+                // 目标路由的命名元信息注入，无名路由无元信息可挂载）。
+                // 收集警告而非无声丢失——否则声明者以为别名已生效。
+                if ($info->forgeAliases !== []) {
+                    $uri = $info->uri;
+                    foreach ($info->forgeAliases as $alias) {
+                        if (is_string($alias) && $alias !== '') {
+                            $warnings[] = "Alias [{$alias}] is declared via ->forgeAlias() on an unnamed route ({$uri}); "
+                                . 'the declaration is ignored because the route has no name. '
+                                . 'Add ->name(...) to the route or move the alias to a named route.';
+                        }
+                    }
+                }
+                continue;
+            }
+            if ($this->filter->isExcluded($name)) {
+                continue; // forge 自身端点与框架内部路由不参与别名体系
+            }
+            $realNames[$name] = true;
+
+            // 宏声明的别名（资源路由不支持别名，见 SPEC §3.1.7）
+            foreach ($info->forgeAliases as $alias) {
+                if (!is_string($alias) || $alias === '') {
+                    continue;
+                }
+                if (isset($macroDecls[$alias])) {
+                    $macroDupes[$alias][] = $name;
+                } else {
+                    $macroDecls[$alias] = $name;
+                }
+            }
+        }
+
+        // 第二遍：宏声明统一过「真实名撞车」检查——撞车时真实路由优先，
+        // 别名声明被忽略并记录（此前仅 config 通道有此检查，宏通道会静默
+        // 覆盖端点元信息中真实路由的条目，属数据污染）
+        foreach ($macroDecls as $alias => $target) {
+            if (isset($realNames[$alias])) {
+                $collisions[$alias] = $target;
+                $warnings[] = "Alias [{$alias}] collides with a real route name; the real route wins and the alias is ignored.";
+                continue;
+            }
+            $aliases[$alias] = $target;
+        }
+
+        // 宏重复声明：同名别名落在多条路由上，先声明者优先，重复的警告
+        foreach ($macroDupes as $alias => $laterTargets) {
+            if (isset($collisions[$alias])) {
+                continue; // 该别名已因撞车被忽略，撞车警告已足够
+            }
+            $all = array_unique(array_merge([$macroDecls[$alias]], $laterTargets));
+            $warnings[] = "Alias [{$alias}] is declared via ->forgeAlias() on multiple routes ("
+                . implode(', ', $all) . '); the first declaration wins and the later ones are ignored.';
+        }
+
+        // 合并 config 声明（宏优先：已存在的别名不被覆盖）；撞车规则与宏通道一致
+        foreach ($this->configAliases as $alias => $target) {
+            if (isset($realNames[$alias])) {
+                // 红行展示取首次记录的指向（宏通道先记录则保留宏指向）
+                $collisions[$alias] ??= $target;
+                $warnings[] = "Alias [{$alias}] collides with a real route name; the real route wins and the alias is ignored.";
+                continue;
+            }
+            if (isset($aliases[$alias])) {
+                if ($aliases[$alias] !== $target) {
+                    $warnings[] = "Alias [{$alias}] is declared both via ->forgeAlias() [→ {$aliases[$alias]}] and config [→ {$target}]; the explicit macro wins.";
+                }
+                continue;
+            }
+            $aliases[$alias] = $target;
+        }
+
+        // 悬空校验：目标必须是真实存在的用户路由名（撞车被忽略的声明不参与）
+        foreach ($aliases as $alias => $target) {
+            if (!isset($realNames[$target])) {
+                throw new AliasTargetException(
+                    "Alias [{$alias}] points to route name [{$target}], which does not exist "
+                    . 'in the current route table. Update or remove the alias in '
+                    . 'config/forge.php or the ->forgeAlias() declaration.',
+                );
+            }
+        }
+
+        return ['aliases' => $aliases, 'warnings' => $warnings, 'collisions' => $collisions];
+    }
+}
