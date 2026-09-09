@@ -16,10 +16,11 @@ use RouteForge\Common\Tier\TierResolver;
  * 供 route:forge:list / route:forge:types 等命令消费（框架无关，命令只负责渲染）。
  *
  * 输出契约（对齐 SPEC §3.2 的 list --json 与 types 收集口径）：
- *   - rows：全量命名路由行，含别名行（alias_of 标记，跟随目标路由的层级归属）；
+ *   - rows：全量命名路由行，含别名行（alias_of 标记）——别名跟随目标路由的层级归属，
+ *     目标以同名多次注册命中多个层级时，每个层级各铺一行（与层级端点的别名注入一致）；
  *   - tier_counts：过滤前统计（含 unassigned 特殊层级；别名计入目标层级，
  *     与摘要 route_count 口径一致）；
- *   - warnings：非致命配置问题（别名撞车 / 「有 tier 无 name」）；
+ *   - warnings：非致命配置问题（别名撞车 / 「有 tier 无 name」/ 同名跨层级重复注册）；
  *   - aliases / collisions：别名映射与撞车声明（供 --aliases 过滤与表格红行）。
  */
 final class RouteAnalyzer
@@ -77,7 +78,9 @@ final class RouteAnalyzer
         $rows       = [];
         $tierCounts = [];
         $warnings   = [];
-        $rowByName  = [];
+        // 路由名 => 该名的全部注册行（同名可多次注册且分属不同层级，必须全部保留：
+        // 层级端点会在 target 解析到的每个层级都注入别名，rows 也必须逐层级跟上）
+        $rowsByName = [];
 
         foreach ($infos as $info) {
             $name = $info->name;
@@ -114,30 +117,59 @@ final class RouteAnalyzer
                 'tier'               => $resolved,
                 'alias_of'           => null,
             ];
-            $rows[]      = $row;
-            $rowByName[$name] = $row;
+            $rows[] = $row;
+            $rowsByName[$name][] = $row;
+        }
+
+        // 同名路由以不同层级重复注册是配置歧义：url() 只解析到末次注册，
+        // 但别名会跟随 target 出现在它解析到的每一个层级。显式告警，别让读者猜。
+        foreach ($rowsByName as $name => $sameName) {
+            if (count($sameName) < 2) {
+                continue;
+            }
+            $levels = array_values(array_unique(array_column($sameName, 'level')));
+            if (count($levels) < 2) {
+                continue; // 层级相同的同名覆盖不产生别名归属歧义
+            }
+            $warnings[] = 'Route name [' . $name . '] is registered ' . count($sameName)
+                . ' times across tiers (' . implode(', ', $levels) . '); url() resolves to the last '
+                . 'registration, while aliases pointing to it appear in every tier it resolves to.';
         }
 
         // 别名条目：跟随目标路由的层级归属，预生成行（alias_of 标记）；
         // 撞车被丢弃的别名由 warnings 反映，不进入 rows
         $aliasResolution = $this->aliasResolver->resolve($infos);
         foreach ($aliasResolution['aliases'] as $alias => $target) {
-            $targetRow = $rowByName[$target] ?? null;
-            if ($targetRow === null) {
+            $targetRows = $rowsByName[$target] ?? [];
+            if ($targetRows === []) {
                 continue; // 目标为未命名/被排除路由，不可能（resolver 已保证目标为真实命名路由）；防御性跳过
             }
-            $tierCounts[$targetRow['level']] = ($tierCounts[$targetRow['level']] ?? 0) + 1;
-            $rows[] = [
-                'name'               => $alias,
-                'level'              => $targetRow['level'],
-                'uri'                => $targetRow['uri'],
-                'methods'            => $targetRow['methods'],
-                'parameters'         => $targetRow['parameters'],
-                'parameter_defaults' => $targetRow['parameter_defaults'],
-                'middleware'         => $targetRow['middleware'],
-                'tier'               => $targetRow['tier'],
-                'alias_of'           => $target,
-            ];
+
+            // 计数口径与摘要 route_count 保持一致：一个别名只计一次，计在末次注册层级
+            $lastRow = $targetRows[array_key_last($targetRows)];
+            $tierCounts[$lastRow['level']] = ($tierCounts[$lastRow['level']] ?? 0) + 1;
+
+            // 行按层级铺开：target 解析到哪一层级，别名就在哪一层级出现（同层级去重），
+            // 与层级端点「每个层级都注入别名键」严格一致，d.ts 才不会漏掉别名类型
+            $emittedLevels = [];
+            foreach ($targetRows as $targetRow) {
+                if (isset($emittedLevels[$targetRow['level']])) {
+                    continue;
+                }
+                $emittedLevels[$targetRow['level']] = true;
+
+                $rows[] = [
+                    'name'               => $alias,
+                    'level'              => $targetRow['level'],
+                    'uri'                => $targetRow['uri'],
+                    'methods'            => $targetRow['methods'],
+                    'parameters'         => $targetRow['parameters'],
+                    'parameter_defaults' => $targetRow['parameter_defaults'],
+                    'middleware'         => $targetRow['middleware'],
+                    'tier'               => $targetRow['tier'],
+                    'alias_of'           => $target,
+                ];
+            }
         }
 
         return [

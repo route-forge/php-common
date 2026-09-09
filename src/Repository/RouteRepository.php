@@ -329,24 +329,40 @@ final class RouteRepository
 
         // 别名条目（SPEC §3.1.7）：带 alias_of 标记，跟随目标路由的层级归属；
         // 撞车被丢弃的别名由 resolver 的 warnings 反映，管理器侧忽略（条目不出现即被丢弃）
-        $aliasMap  = $this->aliasResolver->resolve($infos);
-        $rowByName = array_column($routes, null, 'name');
+        // 目标名以多次注册命中多个 tier 时逐 tier 铺开，与层级端点的别名注入保持一致
+        $aliasMap = $this->aliasResolver->resolve($infos);
+        $rowsByName = [];
+        foreach ($routes as $routeRow) {
+            $rowsByName[$routeRow['name']][] = $routeRow;
+        }
         foreach ($aliasMap['aliases'] as $alias => $target) {
-            $targetRow = $rowByName[$target] ?? null;
-            if ($targetRow === null) {
+            $targetRows = $rowsByName[$target] ?? [];
+            if ($targetRows === []) {
                 continue; // 目标为未命名/被排除路由，不可能（resolver 已保证目标为真实命名路由）；防御性跳过
             }
-            $tiers[$targetRow['tier']] = ($tiers[$targetRow['tier']] ?? 0) + 1;
-            $routes[] = [
-                'name'               => $alias,
-                'uri'                => $targetRow['uri'],
-                'methods'            => $targetRow['methods'],
-                'parameters'         => $targetRow['parameters'],
-                'parameter_defaults' => $targetRow['parameter_defaults'],
-                'middleware'         => $targetRow['middleware'],
-                'tier'               => $targetRow['tier'],
-                'alias_of'           => $target,
-            ];
+
+            // 计数口径与摘要 route_count 一致：一个别名只计一次，计在末次注册 tier
+            $lastRow = $targetRows[array_key_last($targetRows)];
+            $tiers[$lastRow['tier']] = ($tiers[$lastRow['tier']] ?? 0) + 1;
+
+            $emittedTiers = [];
+            foreach ($targetRows as $targetRow) {
+                if (isset($emittedTiers[$targetRow['tier']])) {
+                    continue;
+                }
+                $emittedTiers[$targetRow['tier']] = true;
+
+                $routes[] = [
+                    'name'               => $alias,
+                    'uri'                => $targetRow['uri'],
+                    'methods'            => $targetRow['methods'],
+                    'parameters'         => $targetRow['parameters'],
+                    'parameter_defaults' => $targetRow['parameter_defaults'],
+                    'middleware'         => $targetRow['middleware'],
+                    'tier'               => $targetRow['tier'],
+                    'alias_of'           => $target,
+                ];
+            }
         }
 
         return ['routes' => $routes, 'tiers' => $tiers];
