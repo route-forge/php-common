@@ -11,8 +11,8 @@ namespace RouteForge\Common\Support;
  * 指令依赖该转义），框架无关重实现：
  *
  *   - 第一层：数据 → JSON 文本，flags 带 JSON_HEX_TAG | JSON_HEX_APOS |
- *     JSON_HEX_AMP | JSON_HEX_QUOT，使字符串内容中的 < > ' " & 全部转为 \uXXXX，
- *     </script> 无法截断脚本块；
+ *     JSON_HEX_AMP | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE，使字符串内容中的
+ *     < > ' " & 全部转为 \uXXXX（</script> 无法截断脚本块），而非 ASCII 文本保持原样；
  *   - 第二层：把整个 JSON 文本作为字符串再做一次 json_encode（同样带
  *     JSON_HEX_*），结构引号 " → \u0022、JSON 文本中的反斜杠 \ → \\，
  *     再剥掉外层双引号，产出 JSON.parse('...') 形态的安全 JS 表达式。
@@ -24,7 +24,13 @@ namespace RouteForge\Common\Support;
  */
 final class JsSafeEncoder
 {
-    private const REQUIRED_FLAGS = JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_THROW_ON_ERROR;
+    /**
+     * 与 Illuminate\Support\Js::REQUIRED_FLAGS 逐位对齐：JSON_UNESCAPED_UNICODE
+     * 不可省略——少了它，非 ASCII 文本（如 levels.*.description 的中文）会被转成
+     * \uXXXX，JS 解析结果虽等价，但内嵌进 <head> 的载荷体积按字符数成倍膨胀。
+     */
+    private const REQUIRED_FLAGS = JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT
+        | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR;
 
     /**
      * 编码任意可 JSON 化的数据为安全 JS 表达式（JSON.parse('...') 形态）。
