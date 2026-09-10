@@ -435,6 +435,125 @@ class TierResolverTest extends TestCase
     }
 
     // ---------------------------------------------------------------------
+    // match 规则类型归一化：prefix / middleware 传单值字符串 ≡ 单元素数组
+    // ---------------------------------------------------------------------
+
+    public function test_string_prefix_is_equivalent_to_single_element_array(): void
+    {
+        $stringForm = $this->makeResolver([
+            'admin' => ['match' => ['prefix' => 'admin']],
+        ]);
+        $arrayForm = $this->makeResolver([
+            'admin' => ['match' => ['prefix' => ['admin']]],
+        ]);
+
+        $routes = [
+            $this->makeRoute('admin', []),          // 完全等于前缀 → 命中
+            $this->makeRoute('admin/users', []),    // 按段命中
+            $this->makeRoute('administrator', []),  // 同前缀非独立段 → 不命中
+            $this->makeRoute('public/users', []),   // 不相关 → 不命中
+        ];
+
+        foreach ($routes as $i => $route) {
+            $this->assertSame(
+                $arrayForm->resolve($route),
+                $stringForm->resolve($route),
+                "单值 prefix 与数组 prefix 在第 {$i} 条路由上结果必须一致"
+            );
+        }
+
+        // 显式锚定预期，防止两边同为错误值时断言空转
+        $this->assertSame('admin', $stringForm->resolve($this->makeRoute('admin/users', [])));
+        $this->assertNull($stringForm->resolve($this->makeRoute('administrator', [])));
+    }
+
+    public function test_string_middleware_is_equivalent_to_single_element_array(): void
+    {
+        $stringForm = $this->makeResolver([
+            'admin' => ['match' => ['middleware' => 'auth', 'middleware_match' => 'all']],
+        ]);
+        $arrayForm = $this->makeResolver([
+            'admin' => ['match' => ['middleware' => ['auth'], 'middleware_match' => 'all']],
+        ]);
+
+        $routes = [
+            $this->makeRoute('/x', ['auth']),
+            $this->makeRoute('/x', ['auth', 'web']),
+            $this->makeRoute('/x', ['web']),
+            $this->makeRoute('/x', []),
+        ];
+
+        foreach ($routes as $i => $route) {
+            $this->assertSame(
+                $arrayForm->resolve($route),
+                $stringForm->resolve($route),
+                "单值 middleware 与数组 middleware 在第 {$i} 条路由上结果必须一致"
+            );
+        }
+
+        $this->assertSame('admin', $stringForm->resolve($this->makeRoute('/x', ['auth'])));
+        $this->assertNull($stringForm->resolve($this->makeRoute('/x', ['web'])));
+    }
+
+    public function test_both_string_prefix_and_middleware_do_not_crash_and_match_like_arrays(): void
+    {
+        // 宿主复现用例：'prefix' => 'admin', 'middleware' => ['auth'] 曾因 count(string) TypeError
+        foreach ([true, false] as $prefixAsString) {
+            $match = $prefixAsString
+                ? ['prefix' => 'admin', 'middleware' => ['auth']]
+                : ['prefix' => ['admin'], 'middleware' => ['auth']];
+            $resolver = $this->makeResolver(['admin' => ['match' => $match]]);
+
+            // 命中条件与数组写法一致：prefix 或 middleware 任一命中
+            $this->assertSame('admin', $resolver->resolve($this->makeRoute('admin/users', [])));
+            $this->assertSame('admin', $resolver->resolve($this->makeRoute('public/users', ['auth'])));
+            // 两者都不命中 → unassigned（修复前这里是 TypeError 崩溃）
+            $this->assertNull($resolver->resolve($this->makeRoute('public/users', ['web'])));
+        }
+
+        // 两者同时传单值字符串
+        $resolver = $this->makeResolver([
+            'admin' => ['match' => ['prefix' => 'admin', 'middleware' => 'auth']],
+        ]);
+        $this->assertSame('admin', $resolver->resolve($this->makeRoute('admin/users', [])));
+        $this->assertSame('admin', $resolver->resolve($this->makeRoute('public/users', ['auth'])));
+        $this->assertNull($resolver->resolve($this->makeRoute('public/users', ['web'])));
+    }
+
+    public function test_empty_string_scalars_still_do_not_match_everything(): void
+    {
+        // SPEC 空值边界回归：空字符串（标量形式）不得被归一化放大成「命中全部」
+        $resolver = $this->makeResolver([
+            'bogus' => ['match' => ['prefix' => '', 'middleware' => '']],
+        ]);
+
+        $this->assertNull($resolver->resolve($this->makeRoute('any/uri', ['some.mw'])));
+
+        // 缺 match 键 / 空 match / 空数组三种空值写法同样不命中
+        foreach ([[], ['match' => []], ['match' => ['prefix' => [], 'middleware' => []]]] as $config) {
+            $r = $this->makeResolver(['bogus' => $config]);
+            $this->assertNull($r->resolve($this->makeRoute('any/uri', ['some.mw'])));
+        }
+    }
+
+    public function test_invalid_middleware_match_type_falls_back_to_any_with_warning(): void
+    {
+        $logger = $this->createMock(\Psr\Log\LoggerInterface::class);
+        $logger->expects($this->atLeastOnce())->method('warning')->with(
+            $this->stringContains('middleware_match rule has invalid type [int]')
+        );
+
+        $resolver = new TierResolver(
+            ['admin' => ['match' => ['middleware' => ['auth', 'admin'], 'middleware_match' => 123]]],
+            logger: $logger,
+        );
+
+        // 回落 any：命中任一即归类（此前是 matchMiddleware 参数类型 TypeError 崩溃）
+        $this->assertSame('admin', $resolver->resolve($this->makeRoute('/x', ['admin'])));
+        $this->assertNull($resolver->resolve($this->makeRoute('/x', ['web'])));
+    }
+
+    // ---------------------------------------------------------------------
     // DNF 边界：越界索引 / 空子句
     // ---------------------------------------------------------------------
 

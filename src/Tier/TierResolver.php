@@ -147,17 +147,23 @@ readonly class TierResolver
      * prefix 与 middleware 同时配置时，任一命中即归入此层级（OR 关系，与原有行为一致）。
      * 若两者都为空配置，则不命中（避免空 match 全量命中所有路由）。
      *
+     * 类型归一化（SPEC §3.1.2）：prefix / middleware 除数组外也接受单个字符串（或标量），
+     * 等价于只含该值的单元素数组；null / 缺键等价于空数组。归一化不改变任何匹配语义：
+     * 空字符串仍按「空前缀跳过」处理，不会命中全部路由。
+     * middleware_match 仅接受 'any' | 'all' | DNF 数组；其他类型回落 'any' 并记 warning
+     * （未知字符串的静默降级为 any 是既有声明行为，见 matchMiddleware）。
+     *
      * @param array<string, mixed> $match
      */
     private function matchConfig(RouteInfo $route, array $match): bool
     {
-        $prefixes = $match['prefix'] ?? [];
-        $middlewares = $match['middleware'] ?? [];
-        $middlewareMatch = $match['middleware_match'] ?? 'any';
+        $prefixes = (array) ($match['prefix'] ?? []);
+        $middlewares = (array) ($match['middleware'] ?? []);
+        $middlewareMatch = $this->normalizeMiddlewareMatch($route, $match['middleware_match'] ?? 'any');
 
         // prefix: URI 命中任一前缀即命中此层级
         $prefixHit = false;
-        foreach ((array) $prefixes as $prefix) {
+        foreach ($prefixes as $prefix) {
             if ($prefix !== '' && (str_starts_with($route->uri, $prefix . '/') || $route->uri === $prefix)) {
                 $prefixHit = true;
                 break;
@@ -175,6 +181,25 @@ readonly class TierResolver
         }
 
         return $prefixHit || $middlewareHit;
+    }
+
+    /**
+     * middleware_match 类型守卫：string（'any'|'all'，含未知字符串的既有降级路径）与
+     * array（DNF）之外的一切类型（int / bool / object 等）回落 'any' 并记录 warning。
+     */
+    private function normalizeMiddlewareMatch(RouteInfo $route, mixed $middlewareMatch): array|string
+    {
+        if (is_string($middlewareMatch) || is_array($middlewareMatch)) {
+            return $middlewareMatch;
+        }
+
+        $this->logger?->warning(
+            'Route (' . $route->uri . ') matched a level whose middleware_match rule has invalid type ['
+            . (get_debug_type($middlewareMatch)) . ']; expected string ("any"/"all") or DNF array. '
+            . 'Falling back to "any".'
+        );
+
+        return 'any';
     }
 
     /**
