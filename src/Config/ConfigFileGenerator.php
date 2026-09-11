@@ -180,7 +180,7 @@ PHP;
         $lines[] = "{$i}    'load'  => " . var_export($config['load'] ?? 'lazy', true) . ',';
 
         if (isset($config['endpoint_middleware']) && !empty($config['endpoint_middleware'])) {
-            $lines[] = "{$i}    'endpoint_middleware' => " . $this->exportInlineArray($config['endpoint_middleware']) . ',';
+            $lines[] = "{$i}    'endpoint_middleware' => " . $this->exportInlineArray((array) $config['endpoint_middleware']) . ',';
         }
 
         $lines[] = "{$i}],";
@@ -197,8 +197,11 @@ PHP;
     {
         $parts = [];
 
-        $prefix     = $match['prefix'] ?? [];
-        $middleware = $match['middleware'] ?? [];
+        // 类型归一化（与 TierResolver::matchConfig 同口径）：prefix / middleware 除数组外
+        // 也接受单个字符串（标量→单元素数组，null→[]），避免单值写法在 exportInlineArray
+        // 的 array 类型声明上崩溃；落盘被规范化为数组字面量，语义不变。
+        $prefix     = (array) ($match['prefix'] ?? []);
+        $middleware = (array) ($match['middleware'] ?? []);
         $parts[]    = "'prefix' => " . $this->exportInlineArray($prefix);
         $parts[]    = "'middleware' => " . $this->exportInlineArray($middleware);
 
