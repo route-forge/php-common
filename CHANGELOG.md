@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-09-12
+
 ### 修复
 
 - `ConfigFileGenerator` 的类型归一化口径与 `TierResolver::matchConfig`（1.1.1）对齐：层级 `match.prefix` / `match.middleware` 及 level 级 `endpoint_middleware` 传单值字符串（如 `'prefix' => 'admin'`）时，保存生成 `config/forge.php` 不再在 `exportInlineArray(array)` 的类型声明上抛 `TypeError`；统一按 `(array)` 归一后落盘为单元素数组字面量，语义不变。此前手写配置的字符串写法能被 `TierResolver` 读取、却无法经管理器保存回写，属两侧不对称。
